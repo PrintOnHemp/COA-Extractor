@@ -1,3 +1,29 @@
+from datetime import datetime
+# For consistent human-expected rounding
+from decimal import Decimal, ROUND_HALF_UP
+# Global helper for traditional rounding (round half up)
+def round_half_up(value, decimals=2):
+    quant = Decimal('1.' + '0' * decimals)
+    return float(Decimal(str(value)).quantize(quant, rounding=ROUND_HALF_UP))
+
+# Helper for consistent date output
+def normalize_date(date_str):
+    import re
+    if not date_str:
+        return None
+    try:
+        # Replace dots or dashes with slashes
+        date_str = re.sub(r"[.\-]", "/", date_str.strip())
+        # Try multiple formats
+        for fmt in ("%m/%d/%Y", "%m/%d/%y", "%m.%d.%Y", "%m-%d-%Y"):
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.strftime("%m/%d/%Y")
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return date_str
 import os, re, pdfplumber, pandas as pd
 from datetime import datetime
 
@@ -17,7 +43,7 @@ def clean_num(val):
         return "ND"
     import re
     m = re.search(r"[-+]?\d*\.?\d+", s)
-    return round(float(m.group(0)), 2) if m else None
+    return "{:.2f}".format(round_half_up(float(m.group(0)), 2)) if m else None
 
 def extract_top_terpenes(text):
     import re
@@ -34,12 +60,18 @@ def extract_top_terpenes(text):
     terp_text = "\n".join(lines)
     # Split text into lines and then by mg/g to isolate each terpene entry
     for line in terp_text.splitlines():
-        # Break line into individual terpene chunks at 'mg/g'
-        chunks = re.split(r"\s*mg/g\s*", line)
+        # Break line into individual terpene chunks at '0.002 0.005 mg/g' (robust to whitespace/newlines)
+        chunks = re.split(r"\s*0\.002\s+0\.005\s+mg/\s*g\s*", line, flags=re.I)
         for chunk in chunks:
-            if not chunk.strip():
+            chunk = re.sub(r"\s+", " ", chunk.strip())
+            if not chunk:
                 continue
-            m = re.match(r"([A-Za-z0-9\-\(\)\s]+)\s+([0-9\.<>NDnd]+)", chunk.strip())
+            # Accept analytes with Greek and Latin, and value as integer or decimal or <LOQ>
+            m = re.match(
+                r"([A-Za-z0-9\-\(\)α-ωΑ-Ω]+(?:\s+[A-Za-z0-9\-\(\)α-ωΑ-Ω]+)*)\s+((?:<\s*LOQ)|(?:[0-9]+(?:\.[0-9]+)?))\b",
+                chunk,
+                flags=re.I,
+            )
             if not m:
                 continue
             analyte = m.group(1).strip()
@@ -73,8 +105,9 @@ def extract_top_terpenes(text):
                 terpenes.append((analyte, "<LOQ"))
                 continue
             try:
+                val = float(result_str)
                 # Convert mg/g to percentage for Green Leaf Lab by dividing by 10
-                result = round(float(result_str) / 10, 2)
+                result = round_half_up(val / 10, 2)
                 terpenes.append((analyte, result))
             except:
                 continue
@@ -85,7 +118,7 @@ def extract_top_terpenes(text):
     top5 = []
     for name, val in terpenes[:5]:
         if isinstance(val, (int, float)):
-            top5.append((name, f"{val}%"))
+            top5.append((name, f"{round_half_up(val, 2):.2f}%"))
         elif val == "<LOQ":
             top5.append((name, "<LOQ"))
         else:
@@ -120,7 +153,7 @@ def extract_top_terpenes_chemhistory(text):
                 terpenes.append((analyte, "<LOQ"))
                 continue
             try:
-                value = round(float(first_val), 2)
+                value = round_half_up(float(first_val), 2)
                 terpenes.append((analyte, value))
             except:
                 continue
@@ -131,7 +164,7 @@ def extract_top_terpenes_chemhistory(text):
     top5 = []
     for name, val in terpenes[:5]:
         if isinstance(val, (int, float)):
-            top5.append((name, f"{val}%"))
+            top5.append((name, f"{round_half_up(val, 2):.2f}%"))
         elif val == "<LOQ":
             top5.append((name, "<LOQ"))
         else:
@@ -173,20 +206,20 @@ def extract_confident_lims(text):
         segment = text[pass_matches[2]:]
         percents = re.findall(r"([0-9]+\.[0-9]+)\s*%", segment)
         if len(percents) >= 1:
-            out["Total THC %"] = f"{round(float(percents[0]), 2)}%"
+            out["Total THC %"] = f"{round_half_up(float(percents[0]), 2):.2f}%"
         if len(percents) >= 2:
-            out["Total CBD %"] = f"{round(float(percents[1]), 2)}%"
+            out["Total CBD %"] = f"{round_half_up(float(percents[1]), 2):.2f}%"
         if len(percents) >= 3:
-            out["Total Cannabinoids %"] = f"{round(float(percents[2]), 2)}%"
+            out["Total Cannabinoids %"] = f"{round_half_up(float(percents[2]), 2):.2f}%"
 
     # Only capture the number if it appears on the same line as "Moisture Activity"
     terp_match = re.search(r"Moisture Activity[^\n]*?([0-9]+\.[0-9]+)%?", text, re.I)
-    out["Total Terpenes %"] = f"{round(float(terp_match.group(1)), 2)}%" if terp_match else None
+    out["Total Terpenes %"] = f"{round_half_up(float(terp_match.group(1)), 2):.2f}%" if terp_match else None
 
     m = re.search(r"Harvest/Production Date:\s*([0-9/]{2}/[0-9/]{2}/[0-9]{4})", text)
     if not m:
         m = re.search(r"Harvest/Prod\. Date:\s*([0-9\./\-]+)", text)
-    out["Harvested Date"] = m.group(1) if m else None
+    out["Harvested Date"] = normalize_date(m.group(1)) if m else None
 
     # Extract METRC Batch
     m_metrc = re.search(r"METRC Batch:\s*([A-Z0-9]+)", text, re.I)
@@ -199,7 +232,7 @@ def extract_confident_lims(text):
         m_tested = re.search(r"Cannabinoids.*?(?:Pass)?\s*\n.*?([0-9]{2}/[0-9]{2}/[0-9]{4})", text, re.I|re.S)
     if not m_tested:
         m_tested = re.search(r"Date Accepted:\s*([0-9/]{2}/[0-9/]{2}/[0-9]{2,4})", text)
-    out["Tested Date"] = m_tested.group(1) if m_tested else None
+    out["Tested Date"] = normalize_date(m_tested.group(1)) if m_tested else None
     out["Source File"] = None
 
     top5 = extract_top_terpenes_chemhistory(text)
@@ -245,7 +278,7 @@ def extract_greenleaf(text):
     else:
         m = re.search(r"Total THC\s*:\s*([0-9\.]+)\s*%", text, re.I)
         if m:
-            out["Total THC %"] = f"{round(float(m.group(1)), 2)}%"
+            out["Total THC %"] = f"{round_half_up(float(m.group(1)), 2):.2f}%"
 
     out["Total CBD %"] = None
     m_loq = re.search(r"Total CBD\s*:\s*<\s*LOQ", text, re.I)
@@ -254,7 +287,7 @@ def extract_greenleaf(text):
     else:
         m = re.search(r"Total CBD\s*:\s*([0-9\.]+)\s*%", text, re.I)
         if m:
-            out["Total CBD %"] = f"{round(float(m.group(1)), 2)}%"
+            out["Total CBD %"] = f"{round_half_up(float(m.group(1)), 2):.2f}%"
 
     out["Total Terpenes %"] = None
     m_loq = re.search(r"Total Terpenes\s*:\s*<\s*LOQ", text, re.I)
@@ -263,23 +296,21 @@ def extract_greenleaf(text):
     else:
         m = re.search(r"Total Terpenes\s*:\s*([0-9\.]+)\s*%", text, re.I)
         if m:
-            out["Total Terpenes %"] = f"{round(float(m.group(1)), 2)}%"
+            out["Total Terpenes %"] = f"{round_half_up(float(m.group(1)), 2):.2f}%"
 
     # Extract Total Cannabinoids % as the first number after "Total Cannabinoids" (percent sign may not be present)
     out["Total Cannabinoids %"] = None
     m = re.search(r"Total Cannabinoids\s+([0-9]+\.[0-9]+)", text)
     if m:
-        out["Total Cannabinoids %"] = f"{round(float(m.group(1)), 2)}%"
+        out["Total Cannabinoids %"] = f"{round_half_up(float(m.group(1)), 2):.2f}%"
     m = re.search(r"Harvest/Prod\. Date:\s*([0-9\./]+)", text)
     if m:
         date_val = m.group(1).strip()
-        # Convert dots to slashes for consistency
-        date_val = date_val.replace(".", "/")
-        out["Harvested Date"] = date_val
+        out["Harvested Date"] = normalize_date(date_val)
     else:
         out["Harvested Date"] = None
     m = re.search(r"Date Accepted:\s*([0-9/]{2}/[0-9/]{2}/[0-9]{2,4})", text)
-    out["Tested Date"] = m.group(1) if m else None
+    out["Tested Date"] = normalize_date(m.group(1)) if m else None
     # Extract METRC Batch or Source ID
     m_metrc = re.search(r"(?:METRC Batch|Source ID):\s*([A-Z0-9]+)", text, re.I)
     out["METRC Batch"] = m_metrc.group(1) if m_metrc else None
