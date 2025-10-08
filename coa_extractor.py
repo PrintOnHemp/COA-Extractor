@@ -228,10 +228,7 @@ def extract_confident_lims(text):
     # Improved Tested Date extraction: look for Cannabinoids section date first
     m_tested = re.search(r"Cannabinoids.*?\n\s*([0-9]{2}/[0-9]{2}/[0-9]{4})", text, re.I)
     if not m_tested:
-        # fallback to any standalone date after "Cannabinoids"
         m_tested = re.search(r"Cannabinoids.*?(?:Pass)?\s*\n.*?([0-9]{2}/[0-9]{2}/[0-9]{4})", text, re.I|re.S)
-    if not m_tested:
-        m_tested = re.search(r"Date Accepted:\s*([0-9/]{2}/[0-9/]{2}/[0-9]{2,4})", text)
     out["Tested Date"] = normalize_date(m_tested.group(1)) if m_tested else None
     out["Source File"] = None
 
@@ -309,8 +306,12 @@ def extract_greenleaf(text):
         out["Harvested Date"] = normalize_date(date_val)
     else:
         out["Harvested Date"] = None
-    m = re.search(r"Date Accepted:\s*([0-9/]{2}/[0-9/]{2}/[0-9]{2,4})", text)
-    out["Tested Date"] = normalize_date(m.group(1)) if m else None
+    # Prefer date from Lab Director signature line; if not found, leave as None
+    m_dir = re.search(r"Lab Director\s*[-–—]\s*\n?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4})", text, re.I | re.S)
+    if m_dir:
+        out["Tested Date"] = normalize_date(m_dir.group(1))
+    else:
+        out["Tested Date"] = None
     # Extract METRC Batch or Source ID
     m_metrc = re.search(r"(?:METRC Batch|Source ID):\s*([A-Z0-9]+)", text, re.I)
     out["METRC Batch"] = m_metrc.group(1) if m_metrc else None
@@ -357,10 +358,28 @@ def process_folder(input_folder, output_csv="coa_unified.csv", pages=3):
         except Exception as e:
             rows.append({"Source File": name, "Error": str(e)})
     cols = [
-      "Strain Name","Farm Name","Farm License","Total Cannabinoids %","Total THC %","Total CBD %","Total Terpenes %",
-      "Harvested Date","METRC Batch","Testing Lab","Tested Date","Source File",
-      "Top Terpene 1","Top Terpene 1 %","Top Terpene 2","Top Terpene 2 %","Top Terpene 3","Top Terpene 3 %",
-      "Top Terpene 4","Top Terpene 4 %","Top Terpene 5","Top Terpene 5 %"
+        "METRC Batch",
+        "Farm Name",
+        "Farm License",
+        "Strain Name",
+        "Testing Lab",
+        "Tested Date",
+        "Harvested Date",
+        "Total THC %",
+        "Total CBD %",
+        "Total Terpenes %",
+        "Total Cannabinoids %",
+        "Top Terpene 1",
+        "Top Terpene 1 %",
+        "Top Terpene 2",
+        "Top Terpene 2 %",
+        "Top Terpene 3",
+        "Top Terpene 3 %",
+        "Top Terpene 4",
+        "Top Terpene 4 %",
+        "Top Terpene 5",
+        "Top Terpene 5 %",
+        "Source File"
     ]
     df = pd.DataFrame(rows, columns=cols)
     output_dir = os.path.dirname(os.path.abspath(output_csv))
