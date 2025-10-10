@@ -129,40 +129,73 @@ def extract_top_terpenes(text):
 
 def extract_top_terpenes_chemhistory(text):
     import re
-    terpenes = []
-    m_section = re.search(r"Analyte Mass Mass LOQ.*?% mg/g % % mg/g %(.*?)(?:Primary Aromas)", text, re.S|re.I)
+    # 1. Narrow to section between "Analyte Mass Mass LOQ" and "Primary Aromas"
+    m_section = re.search(r"Analyte Mass Mass LOQ.*?(?:% mg/g % % mg/g %)?(.*?)(?:Primary Aromas)", text, re.S | re.I)
     if not m_section:
         return [(None, None)] * 5
-    terp_text = m_section.group(1).strip()
-    lines = terp_text.splitlines()
-    for line in lines:
-        # Each analyte in ChemHistory has: Name  <val/% or <LOQ>  <mg/g or <LOQ>  <LOQ-limit-number>
-        # The trailing LOQ-limit number (e.g., 0.02) was being left behind and then prefixed to the next analyte.
-        # Fix: (1) require analyte to START with a letter (Latin or Greek) so numbers can't prefix names,
-        #      (2) consume the trailing LOQ-limit token, if present.
-        matches = re.findall(
-            r"([A-Za-z\(\)\-\u03B1-\u03C9\u0391-\u03A9][A-Za-z0-9\-\(\)\s\u03B1-\u03C9\u0391-\u03A9]*?)"
-            r"\s+((?:<\s*LOQ)|(?:[0-9]+\.[0-9]+))"
-            r"\s+((?:<\s*LOQ)|(?:[0-9]+\.[0-9]+))"
-            r"\s+(?:<\s*LOQ|[0-9]+\.[0-9]+)?",
-            line
-        )
-        for analyte, first_val, second_val in matches:
-            analyte = analyte.strip()
-            if "<" in first_val.upper():
-                terpenes.append((analyte, "<LOQ"))
-                continue
-            try:
-                value = round_half_up(float(first_val), 2)
-                terpenes.append((analyte, value))
-            except:
-                continue
-    numeric_terpenes = [t for t in terpenes if isinstance(t[1], (int, float))]
-    loq_terpenes = [t for t in terpenes if t[1] == "<LOQ"]
-    numeric_terpenes.sort(key=lambda x: x[1], reverse=True)
-    terpenes = numeric_terpenes + loq_terpenes
+    terp_text = m_section.group(1)
+    # 2. Define explicit terpene list (as found in ChemHistory PDFs)
+    terpenes_list = [
+        "cis-Phytol", "γ-Terpinene", "Valencene", "Anisole", "Sabinene", "Fenchone",
+        "Ocimene 1", "Isoborneol", "Geraniol", "δ-Limonene", "Neral", "Ocimene 2",
+        "α-Humulene", "Camphene", "α-Terpinene", "α-Phellandrene", "trans-Phytol",
+        "γ-Terpineol", "Caryophyllene Oxide", "Geranyl Acetate", "(-) -β-Pinene",
+        "β-Caryophyllene", "α-Pinene", "Sabinene Hydrate", "Camphor", "Nerol",
+        "(-)-α-Bisabolol", "trans-Nerolidol", "α-Cedrene", "Borneol", "Terpinolene",
+        "Hexahydro Thymol", "Endo-Fenchyl Alcohol", "Squalene", "p-Isopropyltoluene",
+        "δ-3-Carene", "Azulene", "Eucalyptol", "α-Terpineol", "Eugenol", "Cedrol",
+        "(-)-Isopulegol", "Citral", "Pulegone", "(-)-Guaiol", "cis-Nerolidol",
+        "Linalool", "β-Farnesene", "Neryl Acetate", "cis-β-Farnesene", "β-Myrcene",
+        "α-Farnesene"
+    ]
+    # 3. For each terpene, find the value (float or <LOQ>) after its name within a few tokens
+    #    We'll tokenize the section for robust searching
+    #    Build a flat list of tokens (split on whitespace)
+    tokens = re.split(r"\s+", terp_text)
+    terpene_values = []
+    for terpene in terpenes_list:
+        # Find all indices where this terpene name appears (exact match, robust to line breaks)
+        # To avoid partial matches, join tokens to text and search using word boundaries
+        # But also, fallback to token-based search for robustness
+        # We'll search for the terpene as a sequence of tokens
+        terpene_tokens = terpene.split()
+        for idx in range(len(tokens) - len(terpene_tokens)):
+            if tokens[idx:idx+len(terpene_tokens)] == terpene_tokens:
+                # After the terpene name, look for the next 1-3 tokens that could be a value
+                after_idx = idx + len(terpene_tokens)
+                value = None
+                # Check up to 4 tokens after for a number or <LOQ>
+                for offset in range(4):
+                    if after_idx + offset >= len(tokens):
+                        break
+                    candidate = tokens[after_idx + offset]
+                    # Accept "<LOQ>", "< LOQ>", or numbers
+                    if re.fullmatch(r"<\s*LOQ", candidate, re.I) or re.fullmatch(r"<LOQ", candidate, re.I):
+                        value = "<LOQ"
+                        break
+                    # Accept float or int
+                    mval = re.match(r"^([0-9]*\.?[0-9]+)$", candidate)
+                    if mval:
+                        value = float(mval.group(1))
+                        break
+                if value is not None:
+                    terpene_values.append((terpene, value))
+                break  # Only first occurrence per terpene
+    # 4. Store (terpene_name, value) as per rules
+    results = []
+    for terpene, value in terpene_values:
+        if value == "<LOQ":
+            results.append((terpene, "<LOQ"))
+        elif isinstance(value, float):
+            results.append((terpene, round_half_up(value, 2)))
+    # 5. Rank by numeric value (ignore <LOQ> during sort)
+    numeric_terps = [t for t in results if isinstance(t[1], (int, float, float))]
+    loq_terps = [t for t in results if t[1] == "<LOQ"]
+    numeric_terps.sort(key=lambda x: x[1], reverse=True)
+    terpenes_sorted = numeric_terps + loq_terps
+    # 6. Return top 5 as (name, percent_string or <LOQ>)
     top5 = []
-    for name, val in terpenes[:5]:
+    for name, val in terpenes_sorted[:5]:
         if isinstance(val, (int, float)):
             top5.append((name, f"{round_half_up(val, 2):.2f}%"))
         elif val == "<LOQ":

@@ -3,8 +3,8 @@ Small utility to extract fields from lab COA PDFs and normalize them into a CSV.
 
 
 VERSION
-- 0.2.14
-- 2025-10-08 17:20
+- 0.2.15
+- 2025-10-10
 
 
 USAGE
@@ -22,6 +22,8 @@ CREDITS
 - Vibe Code Contributions by Matt Glyer and Austin Smith using ChatGPT5.
 
 
+CHANGELOG
+- 0.2.15 (2025-10-08 [current time]): Overhauled ChemHistory terpene extraction to use explicit terpene lookup table and numeric parsing for consistent handling of 3-token and 4-token formats.
 - 0.2.14 (2025-10-08 17:20): Reordered CSV output columns to match the user-defined final structure: METRC Batch, Farm Name, Farm License, Strain Name, Testing Lab, Tested Date, Harvested Date, Total THC %, Total CBD %, Total Terpenes %, Total Cannabinoids %, Top Terpene 1–5 (and %), Source File.
 - 0.2.12 (2025-10-08 17:10): Updated CSV output column order to match latest COA Parsed Data Template (2025_10_08).
 - 0.2.11 (2025-10-08 16:00): Refined ChemHistory Tested Date extraction; removed fallback that used 'Date Accepted' and retained only relevant regex patterns targeting dates near 'Cannabinoids Pass'.
